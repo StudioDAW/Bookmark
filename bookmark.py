@@ -1,4 +1,3 @@
-import enum
 from reportlab.lib.pagesizes import *
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
@@ -12,6 +11,20 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import time
 import lorem
+
+
+EMOJI_PATTERN = re.compile(
+    "[" 
+    "\U0001F300-\U0001F5FF"  # symbols & pictographs
+    "\U0001F600-\U0001F64F"  # emoticons
+    "\U0001F680-\U0001F6FF"  # transport & map symbols
+    "\U0001F700-\U0001F77F"  # alchemical symbols
+    "\U0001F900-\U0001F9FF"  # supplemental symbols
+    "\U00002600-\U000026FF"  # misc symbols 
+    "\U00002700-\U000027BF"  # dingbats
+    "]+",
+    flags=re.UNICODE
+)
 
 
 class BookmarkError(Exception):
@@ -32,8 +45,8 @@ class FileWatcher(FileSystemEventHandler):
 
 class Font(str):
     size: int
-    bold: str|None
-    italic: str|None
+    bold: str
+    italic: str
 
 
 class Document:
@@ -58,9 +71,11 @@ class Document:
         self.canvas = canvas.Canvas(self.filename, self.pagesize)
         self.margin = (0, 0, 0, 0)
         self.font = Font("Helvetica")
-        self.font.bold = "Helvetica-Bold"
+        self.font.bold = "Helvetica"
+        self.font.italic = "Helvetica"
         self.font.size = 12
         self.initfont("Zapf", "~/Library/Fonts/Zapf Dingbats Regular.ttf")
+        self.initfont("Emoji", "~/Library/Fonts/NotoEmoji-Regular.ttf")
         self.cursor_y = self.pagesize[1]
 
     def setmargin(self, top=None, right=None, bottom=None, left=None, vertical=None, horizontal=None, all=None):
@@ -97,6 +112,8 @@ class Document:
 
     def newpage(self):
         self.canvas.showPage()
+        self.setfont(self.font)
+        self.cursor_y = self.pagesize[1]-self.margin[0]
 
     def heading(self, text="Heading", level=2):
         text = text.replace("\n","")
@@ -112,43 +129,44 @@ class Document:
 
         self.canvas.setFont(self.font, self.font.size)
 
-    def split(self, text):
-        buffer = []
-        self.paragraph("")
-        for i, line in enumerate(text.splitlines()):
-            if i % 2 == 1:
-                buffer.append(line)
-            else:
-                self.paragraph(line, nogap=True)
-
-        self.newpage()
-
-        self.setfont(self.font)
-
-        self.cursor_y = self.pagesize[1]-self.margin[0]
-        self.paragraph("")
-
-        for line in buffer:
-            self.paragraph(line, nogap=True)
-
-
-    def paragraph(self, text=None, leading=None, justified=True, parspacing=0, nogap=False):
+    def paragraph(self, text=None, leading=None, spacing=1):
         if text == None:
             text = lorem.paragraph()
         if leading is None:
             leading = int(self.font.size * 1.2)
 
+        if self.cursor_y == self.pagesize[1] - self.margin[0]:
+            self.cursor_y -= leading
+
+        pages = self.justifytext(text)
+        for i, page in enumerate(pages):
+            for line in page:
+                for data in line:
+                    self.canvas.drawString(*data)
+                    self.cursor_y = data[1]
+            if i < len(pages)-1:
+                self.newpage()
+
+        self.cursor_y -= spacing*leading
+
+    def justifytext(self, text, leading=None):
+        if leading is None:
+            leading = int(self.font.size * 1.2)
+
         x = self.margin[3]
+        y = self.cursor_y - leading
         width = self.pagesize[0] - self.margin[3] - self.margin[1]
         space_base = self.canvas.stringWidth(" ", self.font, self.font.size)
 
-        text += "\n" if not nogap else ""
+        justified = []
+        justified_page = []
+        justified_line = []
 
-        for raw_line in (text).split("\n"):
+        for raw_line in text.split("\n"):
             words = raw_line.split()
 
             if not words:
-                self.cursor_y -= leading
+                # justified_line.append((x, ""))
                 continue
             else:
                 words[0] = " "*raw_line.find(words[0]) + words[0]
@@ -167,11 +185,8 @@ class Document:
                 lines.append(current_line)
 
             for i, line in enumerate(lines):
-                if self.cursor_y - leading < self.margin[2]:
-                    self.newpage()
-
-                if not justified or len(line) == 1 or i == len(lines) - 1:
-                    self.canvas.drawString(x, self.cursor_y, " ".join(line))
+                if len(line) == 1 or i == len(lines) - 1:
+                    justified_line.append((x, y, " ".join(line)))
                 else:
                     word_widths = [self.canvas.stringWidth(w, self.font, self.font.size) for w in line]
                     total_words_width = sum(word_widths)
@@ -180,13 +195,47 @@ class Document:
                     extra_space = (width - total_words_width - natural_space) / gaps
                     cursor = x
                     for j, w in enumerate(line):
-                        self.canvas.drawString(cursor, self.cursor_y, w)
+                        justified_line.append((cursor, y, w))
                         cursor += word_widths[j]
                         if j < gaps:
                             cursor += space_base + extra_space
-                self.cursor_y -= leading
+                justified_page.append(justified_line)
+                justified_line = []
+                if y - leading < self.margin[2]:
+                    y = self.pagesize[1]-self.margin[0]
+                    justified.append(justified_page)
+                    justified_page = []
+                y -= leading
 
-        self.cursor_y -= parspacing
+        if justified_page != []: justified.append(justified_page)
+
+        return justified
+
+
+    def paragraphdata(self, text=None, leading=None, spacing=1):
+        if text == None:
+            text = lorem.paragraph()
+        if leading is None:
+            leading = int(self.font.size * 1.2)
+
+        y = self.cursor_y
+        if y == self.pagesize[1] - self.margin[0]:
+            y -= leading
+
+        text += "\n"*spacing if spacing else ""
+
+        data = []
+
+        for i, line in enumerate(self.justifytext(text)):
+            for word in line:
+                data.append((word[0], y, word[1]))
+
+            if y - leading < self.margin[2]:
+                data.append((0,0,";newpage()"))
+                y = self.pagesize[1]-self.margin[0]
+            y -= leading
+        
+        return data
 
     def list(self, text="", leading=None):
         default_font = self.font
@@ -229,10 +278,10 @@ class Document:
 Rewrite Parser to handle args better 
 """
 class Parser:
-    def __init__(self, doc:Document):
+    def __init__(self, doc):
         self.doc = doc
 
-        self.methods = {name: method for name, method in inspect.getmembers(Document, predicate=inspect.isfunction)}
+        self.methods = {name: method for name, method in inspect.getmembers(type(self.doc), predicate=inspect.isfunction)}
 
     def parse_args(self, arg_str):
         if not arg_str:
@@ -312,7 +361,6 @@ class Parser:
         if current_command and buffer:
             if buffer[-1] == "": buffer.pop()
             getattr(self.doc, current_command)("\n".join(buffer), **current_args)
-
 
 
 def loop(path):

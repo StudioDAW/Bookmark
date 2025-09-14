@@ -1,7 +1,7 @@
 ;document()
+;setmargin(all=0)
 
-;setmargin(all=50)
-
-;heading(): Bookmark
+;initfont(name="CMU", path="~/Library/Fonts/cmunrm.ttf")
+;setfont(name="CMU")
 
 ;paragraph()

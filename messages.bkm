@@ -1,0 +1,10 @@
+;document()
+
+;setmargin(all=12)
+
+;initfont(name="font", path="/System/Library/Fonts/Helvetica.ttc")
+;initfont(name="cmu", path="~/Library/Fonts/cmunrm.ttf")
+;setfont(name="font", size=6)
+
+;paragraph()
+

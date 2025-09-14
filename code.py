@@ -1,5 +1,3 @@
 import bookmark
 
-book = bookmark.Document()
-
-bookmark.loop(book.path)
+bookmark.loop(bookmark.Document().path)
