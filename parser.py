@@ -1,24 +1,4 @@
 import re
-from pprint import pprint
-
-text = """;document()
-
-;p = \\;paragraph
-
-;sm = \\;setmargin(top=20)
-
-;sm
-
-;p(): testing
-"""
-
-class DOC:
-    def document(self, **kwargs):
-        print("Document block called")
-    def setmargin(self, **kwargs):
-        print(kwargs)
-    def paragraph(self, **kwargs):
-        print("Paragraph:", kwargs.get("arg", ""))
 
 # --- Patterns ---
 BLOCK_PATTERN = re.compile(
@@ -28,31 +8,59 @@ BLOCK_PATTERN = re.compile(
     re.DOTALL
 )
 
-VAR_ASSIGN_PATTERN = re.compile(r";(\w+)\s*=\s*(.+)")
+VAR_ASSIGN_PATTERN = re.compile(
+    r";(\w+)\s*=\s*(.*?)(?=(?:\n\s*;|$))",
+    re.DOTALL
+)
 
 variables = {}
 
 def parse_value(val: str):
     val = val.strip().rstrip(",")
-    # escaped semicolon means "function reference"
+
+    # function reference (escaped semicolon)
     if val.startswith(r"\;"):
-        return val[2:]  # remove \; and store function name
-    # normal variable reference
+        return val[2:]
+
+    # variable reference
     if val.startswith(";"):
-        var_name = val[1:]
-        return variables.get(var_name, val)
-    # boolean / number
-    if val.lower() == "true":
+        return variables.get(val[1:], val)
+
+    # booleans
+    lower_val = val.lower()
+    if lower_val == "true":
         return True
-    if val.lower() == "false":
+    if lower_val == "false":
         return False
+
+    # tuples (with nesting support)
+    if val.startswith("(") and val.endswith(")"):
+        inner = val[1:-1].strip()
+        if not inner:
+            return ()
+        parts, depth, current = [], 0, []
+        for c in inner:
+            if c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+            if c == "," and depth == 0:
+                parts.append("".join(current).strip())
+                current = []
+            else:
+                current.append(c)
+        if current:
+            parts.append("".join(current).strip())
+        return tuple(parse_value(p) for p in parts)
+
+    # integers / floats
     try:
         return int(val)
     except ValueError:
         try:
             return float(val)
         except ValueError:
-            return val
+            return val  # fallback: keep as string
 
 def parse_args(args_str: str):
     args = {}
@@ -82,10 +90,9 @@ def parse_args(args_str: str):
     return args
 
 # First pass: collect variable assignments
-for line in text.splitlines():
-    line = line.strip()
-    m = VAR_ASSIGN_PATTERN.match(line)
-    if m:
+def parse_vars(text: str):
+    for m in VAR_ASSIGN_PATTERN.finditer(text):
+        print(m.groups())
         var_name, val = m.groups()
         variables[var_name] = parse_value(val)
 
@@ -105,13 +112,14 @@ def parse_blocks(text: str):
         })
     return result
 
-parsed = parse_blocks(text)
-doc = DOC()
-for parse in parsed:
-    if hasattr(doc, parse["func"]):
-        getattr(doc, parse["func"])(**parse["args"])
-    else:
-        print(f"Skipping unknown function: {parse['func']}")
+def interpret(cls:object, code:str):
+    parse_vars(code)
+    for parsed in parse_blocks(code):
+        if hasattr(cls, parsed["func"]):
+            print(parsed["args"])
+            if parsed["content"]:
+                parsed["args"]["content"] = parsed["content"]
+            getattr(cls, parsed["func"])(**parsed["args"])
+        else:
+            print(f"Ignoring unknown function: {parsed['func']}")
 
-print("Variables:", variables)
-pprint(parsed)
