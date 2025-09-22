@@ -113,6 +113,7 @@ def parse_blocks(text: str):
 
 def interpret(cls:object, code:str):
     parse_vars(code)
+    print(parse_blocks)
     for parsed in parse_blocks(code):
         if hasattr(cls, parsed["func"]):
             if parsed["content"]:

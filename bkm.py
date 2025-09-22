@@ -1,32 +1,16 @@
+import os
+import sys
+import time
 import uuid
+import lorem
+from layout import TextLayout, convert, pagesizes
 from parser import interpret
 from typing import Literal, get_type_hints, Union, Tuple
+import freetype
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
-pagesizes = {
-    'A1': {"pt": (1683.7795275590554, 2383.937007874016)},
-    'A2': {"pt": (1190.5511811023623, 1683.7795275590554)},
-    'A3': {"pt": (841.8897637795277, 1190.5511811023623)},
-    'A4': {"pt": (595.2755905511812, 841.8897637795277)},
-    'A5': {"pt": (419.52755905511816, 595.2755905511812)},
-    'A6': {"pt": (297.6377952755906, 419.52755905511816)},
-    'A7': {"pt": (209.76377952755908, 297.6377952755906)},
-    'A8': {"pt": (147.40157480314963, 209.76377952755908)},
-    'A9': {"pt": (104.88188976377954, 147.40157480314963)},
-    'A10': {"pt": (73.70078740157481, 104.88188976377954)}
-}
-
-units = {
-    "mm": 25.4 / 72,
-    "px": 1,
-    "in": 1 / 72,
-    "ft": 1 / 72 / 12
-}
-
-for unit, convert in units.items():
-    for sizetype, size in pagesizes.items():
-        size[unit] = (size["pt"][0] * convert, size["pt"][1] * convert)
-
-
+DPI = 96
 
 class Size:
     def __init__(self, element):
@@ -139,28 +123,11 @@ class Div(HTMLElement):
 class Body(HTMLElement):
     def __init__(self, classname="", style=None, content=None, id=None):
         super().__init__("body", classname, style, content, id)
+        
+class P(HTMLElement):
+    def __init__(self, classname="", style=None, content=None, id=None):
+        super().__init__("p", classname, style, content, id)
 
-# Create main doc
-# view = Body("view", style={"margin": "0", "display": "flex", "flex-direction": "column", "align-items": "center", "gap": "10px", "background-color": "#262626"})
-#
-# pages = []
-#
-# for i in range(10):
-#     pages.append(Div("page", style={"width": "210mm", "height": "297mm", "background-color": "white"}))
-#
-#     para = Div("paragraph", style={"font-size": "16pt"})
-#     para.append(f"This is a page {i}")
-#
-#     pages[i].append(para)
-#
-#     pages[i].children[para.id].style["font-family"] = "Arial"
-#
-# for page in pages:
-#     view.append(page)
-#
-# print(view)
-#
-# with open("output.html", "w") as f: f.write(str(view))
 
 class BKM:
     def __init__(self):
@@ -216,13 +183,54 @@ class BKM:
     # LEFT / RIGHT VARIABLES FOR EACH PAGE    
     # INNER / OUTER MARGIN
     def page(self):
-        page = Div("page", style={"width": f"{self.size[0]+self.bleed[1]+self.bleed[3]}{self.unit}", "height": f"{self.size[1]+self.bleed[0]+self.bleed[2]}{self.unit}", "background-color": "white", "position": "relative"})
+        page = Div("page", style={"width": f"{self.size[0]+self.bleed[1]+self.bleed[3]}{self.unit}", "height": f"{self.size[1]+self.bleed[0]+self.bleed[2]}{self.unit}", "background-color": "white", "position": "relative", "padding": " ".join([f"{m+self.bleed[i]}{self.unit}" for i, m in enumerate(self.margin)]), "box-sizing": "border-box", "line-height": "1.2"})
         self.pages.append(page)
+        self.cursor_y = self.margin[0]+self.bleed[0]
 
-    def paragraph(self, content):
-        para = Div("paragraph", style={"font-size": "16pt"})
-        para.append(content)
-        self.pages[-1].append(para)
+    def paragraph(self, content: str, width: float = 1.0, font: tuple[str,int] = ("Helvetica", 20)):
+        print(font)
+        default_width = self.size[0] - self.margin[1] - self.margin[3]
+        if width == 1.0:
+            width = default_width
+        elif width < 1 and width > 0:
+            width *= default_width
+        elif width < 0:
+            width += default_width
+
+        layout = TextLayout(content, "/System/Library/Fonts/Helvetica.ttc", font[1])
+
+        height = layout.height(max_width=width * convert[self.unit]["px"])
+
+        print(height, height * convert["px"][self.unit])
+        self.cursor_y += height * convert["px"][self.unit]
+
+        newpage = False
+        print("y:",self.cursor_y)
+        print("s:",self.size[1]  - self.margin[2] + self.bleed[2])
+        if self.cursor_y > self.size[1] - self.margin[2] + self.bleed[0] + self.bleed[2]:
+            diff = self.cursor_y - (self.size[1] - self.margin[2] + self.bleed[0] + self.bleed[2])
+            line_height = font[1] * convert["pt"]["px"] * 1.2
+            lines = int((diff * convert[self.unit]["px"]) / line_height)
+            split = content.splitlines()
+            self.cursor_y -= height * convert["px"][self.unit] + line_height
+            self.paragraph("\n".join(split[:len(split)-lines]), font=font)
+            self.page()
+            content = "\n".join(split[len(split)-lines:])
+
+        content = "</br>".join(content.splitlines())
+        paragraph = P("paragraph",
+                      style={"margin-top": "0",
+                             "font-family": font[0],
+                             "font-size": f"{layout.font_size_pt}pt",
+                             "text-align": "justify",
+                             "font-kerning": "none"})
+        paragraph.style["width"] = str(width)+self.unit
+        paragraph.append(content)
+        self.pages[-1].append(paragraph)
+
+    def lorem(self, paragraphs=1, width=1):
+        for i in range(paragraphs):
+            self.paragraph(lorem.paragraph(), width)
 
     def write(self):
         print(self.margin)
@@ -230,16 +238,39 @@ class BKM:
             self.pages[0].style["grid-column"] = "2"
         if self.guides:
             for page in self.pages:
-                page.append(Div("guide", {"position": "absolute", "border": "1px solid blue", "inset": " ".join([f"{m+self.bleed[i]}mm" for i, m in enumerate(self.margin)])}))
-                page.append(Div("guide", {"position": "absolute", "border": "1px solid darkred", "inset": " ".join([f"{b}mm" for b in self.bleed])}))
+                page.append(Div("guide", {"position": "absolute", "outline": "1px solid blue", "inset": " ".join([f"{m+self.bleed[i]}mm" for i, m in enumerate(self.margin)])}))
+                page.append(Div("guide", {"position": "absolute", "outline": "1px solid darkgrey", "inset": " ".join([f"{b}mm" for b in self.bleed])}))
         for page in self.pages:
             self.view.append(page)
-        with open("output.html", "w") as f:
-            f.write(str(self.view))
+        with open("index.html", "w") as f:
+            f.write('<script src="http://localhost:35729/livereload.js"></script>'+str(self.view))
 
+
+
+class FileWatcher(FileSystemEventHandler):
+    def __init__(self, path):
+        self.path = path
+
+    def on_modified(self, event):
+        if event.src_path.endswith(self.path):
+            python = sys.executable
+            os.execv(python, [python] + sys.argv)
+
+def loop(path):
+    observer = Observer()
+    observer.schedule(FileWatcher(path), path=os.path.dirname(os.path.abspath(path)) or ".", recursive=False)
+    observer.start()
+
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        observer.stop()
+    observer.join()
 
 if __name__ == "__main__":
     with open("document.bkm", "r") as f:
         interpret(BKM(), f.read())
-    with open("output.html", "r") as f:
-        print(f.read())
+    # with open("index.html", "r") as f:
+    #     print(f.read())
+    loop("document.bkm")
