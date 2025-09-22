@@ -1,5 +1,32 @@
 import uuid
 from parser import interpret
+from typing import Literal, get_type_hints, Union, Tuple
+
+pagesizes = {
+    'A1': {"pt": (1683.7795275590554, 2383.937007874016)},
+    'A2': {"pt": (1190.5511811023623, 1683.7795275590554)},
+    'A3': {"pt": (841.8897637795277, 1190.5511811023623)},
+    'A4': {"pt": (595.2755905511812, 841.8897637795277)},
+    'A5': {"pt": (419.52755905511816, 595.2755905511812)},
+    'A6': {"pt": (297.6377952755906, 419.52755905511816)},
+    'A7': {"pt": (209.76377952755908, 297.6377952755906)},
+    'A8': {"pt": (147.40157480314963, 209.76377952755908)},
+    'A9': {"pt": (104.88188976377954, 147.40157480314963)},
+    'A10': {"pt": (73.70078740157481, 104.88188976377954)}
+}
+
+units = {
+    "mm": 25.4 / 72,
+    "px": 1,
+    "in": 1 / 72,
+    "ft": 1 / 72 / 12
+}
+
+for unit, convert in units.items():
+    for sizetype, size in pagesizes.items():
+        size[unit] = (size["pt"][0] * convert, size["pt"][1] * convert)
+
+
 
 class Size:
     def __init__(self, element):
@@ -137,15 +164,59 @@ class Body(HTMLElement):
 
 class BKM:
     def __init__(self):
-        self.view = Body("view", style={"margin": "0", "display": "flex", "flex-direction": "column", "align-items": "center", "gap": "10px", "background-color": "#262626"})
-        self.pages = []
+        self.view = Body("view", style={"margin": "0", "display": "grid", "columns": "1", "justify-content": "center", "column-gap": "1px", "row-gap": "50px", "background-color": "#262626"})
+        self.spreads = []
+        self.pages: list[HTMLElement] = []
+        self.settings()
 
-    def document(self):
-        pass
+    def document(self,
+                 unit:      Literal["mm","px","pt","in","ft"] = "mm",
+                 size:      Literal["A1","A2","A3","A4","A5","A6","A7","A8","A10"] = "A4",
+                 width:     float | None = None,
+                 height:    float | None = None,
+                 spread:    bool = True,
+                 start:     Literal["left","right"] = "right",
+                 # margin:    Union[int, float, Tuple[int|float, ...]] = (25,25,30,25),
+                 margin:    Tuple[int|float, ...] = (25,25,30,25),
+                 bleed:     Tuple[int|float, ...] = (3,)):
+        w, h = pagesizes[size][unit]
+        if width is not None: w = width
+        if height is not None: h = height
+        self.size = (w,h)
+        self.unit = unit
+        self.spread = spread
+        self.start = start
+        self.margin = margin
+        self.margin = self.csstuple(margin)
+        self.bleed = self.csstuple(bleed)
 
-    def page(self, size):
-        page = Div("page", style={"background-color": "white"})
-        page.size = size
+
+        if self.spread:
+            self.view.style["grid-template-columns"] = "repeat(2, max-content)"
+
+    def settings(self, guides: bool = True):
+        self.guides = guides
+
+    def csstuple(self, values):
+        if len(values) == 1:
+            t = r = b = l = values[0]
+        elif len(values) == 2:
+            t, r = values
+            b, l = t, r
+        elif len(values) == 3:
+            t, r, b = values
+            l = r
+        elif len(values) == 4:
+            t, r, b, l = values
+        else:
+            raise ValueError("CSS shorthand must have 1–4 values")
+
+        return (t, r, b, l)
+
+    # LEFT / RIGHT VARIABLES FOR EACH PAGE    
+    # INNER / OUTER MARGIN
+    def page(self):
+        page = Div("page", style={"width": f"{self.size[0]+self.bleed[1]+self.bleed[3]}{self.unit}", "height": f"{self.size[1]+self.bleed[0]+self.bleed[2]}{self.unit}", "background-color": "white", "position": "relative"})
         self.pages.append(page)
 
     def paragraph(self, content):
@@ -154,7 +225,15 @@ class BKM:
         self.pages[-1].append(para)
 
     def write(self):
-        for page in self.pages: self.view.append(page)
+        print(self.margin)
+        if self.spread and self.start == "right":
+            self.pages[0].style["grid-column"] = "2"
+        if self.guides:
+            for page in self.pages:
+                page.append(Div("guide", {"position": "absolute", "border": "1px solid blue", "inset": " ".join([f"{m+self.bleed[i]}mm" for i, m in enumerate(self.margin)])}))
+                page.append(Div("guide", {"position": "absolute", "border": "1px solid darkred", "inset": " ".join([f"{b}mm" for b in self.bleed])}))
+        for page in self.pages:
+            self.view.append(page)
         with open("output.html", "w") as f:
             f.write(str(self.view))
 

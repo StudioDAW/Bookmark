@@ -92,7 +92,6 @@ def parse_args(args_str: str):
 # First pass: collect variable assignments
 def parse_vars(text: str):
     for m in VAR_ASSIGN_PATTERN.finditer(text):
-        print(m.groups())
         var_name, val = m.groups()
         variables[var_name] = parse_value(val)
 
@@ -116,7 +115,6 @@ def interpret(cls:object, code:str):
     parse_vars(code)
     for parsed in parse_blocks(code):
         if hasattr(cls, parsed["func"]):
-            print(parsed["args"])
             if parsed["content"]:
                 parsed["args"]["content"] = parsed["content"]
             getattr(cls, parsed["func"])(**parsed["args"])
